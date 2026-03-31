@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF + 카메라 스캔 → HTML (앱)</title>  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>  <style>
+    body { font-family: Arial; margin: 10px; }
+    #editor {
+      border: 1px solid #ccc;
+      padding: 10px;
+      min-height: 250px;
+      margin-top: 10px;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+    button { margin-top: 10px; display:block; width:100%; padding:10px; }
+    video, canvas { width:100%; margin-top:10px; }
+  </style></head>
+<body><h3>📄 PDF / 카메라 → HTML</h3>
+<input type="file" id="fileInput" accept="application/pdf">
+<button onclick="startCamera()">📷 카메라 스캔</button>
+<button onclick="captureImage()">📸 촬영</button>
+<button onclick="saveHTML()">💾 HTML 저장</button><video id="video" autoplay playsinline></video> <canvas id="canvas" style="display:none;"></canvas>
+
+<div id="editor" contenteditable="true">텍스트가 여기에 표시됨</div><script>
+// PWA 설치
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+
+const input = document.getElementById('fileInput');
+const editor = document.getElementById('editor');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+
+// PDF 처리
+input.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  editor.innerText = "PDF 처리 중...";
+
+  const reader = new FileReader();
+  reader.onload = async function() {
+    const typedArray = new Uint8Array(this.result);
+    const pdf = await pdfjsLib.getDocument(typedArray).promise;
+
+    let fullText = '';
+    const maxPages = Math.min(pdf.numPages, 5);
+
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const strings = content.items.map(item => item.str).join(' ');
+
+      if (strings.trim().length > 20) {
+        fullText += strings + '\n\n';
+      } else {
+        const viewport = page.getViewport({ scale: 1 });
+        const canvasTmp = document.createElement('canvas');
+        const ctx = canvasTmp.getContext('2d');
+        canvasTmp.width = viewport.width;
+        canvasTmp.height = viewport.height;
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const result = await Tesseract.recognize(canvasTmp, 'kor+eng');
+        fullText += result.data.text + '\n\n';
+      }
+    }
+
+    editor.innerText = fullText;
+  };
+
+  reader.readAsArrayBuffer(file);
+});
+
+// 카메라 시작
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  video.srcObject = stream;
+}
+
+// 사진 찍고 OCR
+async function captureImage() {
+  const ctx = canvas.getContext('2d');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+
+  editor.innerText = "OCR 처리 중...";
+
+  const result = await Tesseract.recognize(canvas, 'kor+eng');
+  editor.innerText = result.data.text;
+}
+
+// 저장
+function saveHTML() {
+  const blob = new Blob([editor.innerHTML], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'edited.html';
+  a.click();
+}
+</script></body>
+</html><!-- manifest.json -->{ "name": "PDF 스캐너", "short_name": "Scanner", "start_url": ".", "display": "standalone", "background_color": "#ffffff", "theme_color": "#ffffff", "icons": [] }
+
+<!-- sw.js -->self.addEventListener('install', e => self.skipWaiting());
